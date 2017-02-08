@@ -1,6 +1,7 @@
 package testchipip
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 import uncore.tilelink._
 import cde.Parameters
 
@@ -10,10 +11,10 @@ import cde.Parameters
  * channel are contiguous.
  */
 class ChannelAddressMapper(n: Int)(implicit p: Parameters) extends Module {
-  val io = new Bundle {
-    val in  = Vec(n, new ClientUncachedTileLinkIO).flip
+  val io = IO(new Bundle {
+    val in  = Flipped(Vec(n, new ClientUncachedTileLinkIO))
     val out = Vec(n, new ClientUncachedTileLinkIO)
-  }
+  })
 
   if (n <= 1) {
     io.out <> io.in
@@ -25,7 +26,7 @@ class ChannelAddressMapper(n: Int)(implicit p: Parameters) extends Module {
       out.acquire.valid := in.acquire.valid
       in.acquire.ready := out.acquire.ready
       out.acquire.bits := in.acquire.bits
-      out.acquire.bits.addr_block := in_addr_block >> UInt(idBits)
+      out.acquire.bits.addr_block := in_addr_block >> idBits.U
       in.grant <> out.grant
     }
   }
@@ -37,10 +38,10 @@ class ChannelAddressMapper(n: Int)(implicit p: Parameters) extends Module {
  */
 class ChannelAddressUnmapper(n: Int, c: Clock = null, r: Bool = null)(implicit p: Parameters)
     extends Module(Option(c), Option(r)) {
-  val io = new Bundle {
-    val in =  Vec(n, new ClientUncachedTileLinkIO).flip
+  val io = IO(new Bundle {
+    val in = Flipped(Vec(n, new ClientUncachedTileLinkIO))
     val out = Vec(n, new ClientUncachedTileLinkIO)
-  }
+  })
 
   val idBits = log2Up(n)
 
@@ -52,7 +53,7 @@ class ChannelAddressUnmapper(n: Int, c: Clock = null, r: Bool = null)(implicit p
       out.acquire.valid := in.acquire.valid
       in.acquire.ready := out.acquire.ready
       out.acquire.bits := in.acquire.bits
-      out.acquire.bits.addr_block := Cat(in_addr_block, UInt(i, idBits))
+      out.acquire.bits.addr_block := Cat(in_addr_block, i.U(idBits.W))
       in.grant <> out.grant
     }
   }

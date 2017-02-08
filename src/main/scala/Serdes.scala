@@ -1,11 +1,12 @@
 package testchipip
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 import junctions._
 import uncore.tilelink._
 import scala.math.max
 import cde.{Parameters, Field}
-import util.{ParameterizedBundle, HellaPeekingArbiter}
+import _root_.util.{ParameterizedBundle, HellaPeekingArbiter}
 
 trait HasTileLinkSerializerParameters extends HasTileLinkParameters {
   val nChannels = 5
@@ -31,22 +32,22 @@ abstract class TLSerModule(_clock: Clock = null, _reset: Bool = null)(implicit v
 
 class TLSerChannel(implicit p: Parameters)
     extends TLSerBundle()(p) {
-  val chan = UInt(width = tlChannelIdBits)
-  val data = UInt(width = tlSerialDataBits)
+  val chan = UInt(tlChannelIdBits.W)
+  val data = UInt(tlSerialDataBits.W)
   val last = Bool()
 }
 
 class TLSerializedIO(implicit p: Parameters) extends TLSerBundle()(p) {
   val ctom = Decoupled(new TLSerChannel)
-  val mtoc = Decoupled(new TLSerChannel).flip
+  val mtoc = Flipped(Decoupled(new TLSerChannel))
 }
 
 trait HasTileLinkSerializers {
-  val SER_ACQ = UInt(4)
-  val SER_PRB = UInt(3)
-  val SER_REL = UInt(2)
-  val SER_GNT = UInt(1)
-  val SER_FIN = UInt(0)
+  val SER_ACQ = 4.U
+  val SER_PRB = 3.U
+  val SER_REL = 2.U
+  val SER_GNT = 1.U
+  val SER_FIN = 0.U
 
   def serialize(in: Acquire)(implicit p: Parameters): TLSerChannel = {
     val out = Wire(new TLSerChannel)
@@ -60,7 +61,7 @@ trait HasTileLinkSerializers {
     val out = Wire(new TLSerChannel)
     out.chan := SER_PRB
     out.data := in.asUInt
-    out.last := Bool(true)
+    out.last := true.B
     out
   }
 
@@ -85,17 +86,17 @@ trait HasTileLinkSerializers {
     val out = Wire(new TLSerChannel)
     out.chan := SER_FIN
     out.data := in.asUInt
-    out.last := Bool(true)
+    out.last := true.B
     out
   }
 }
 
 class ClientTileLinkIOSerdes(w: Int, _clock: Clock = null, _reset: Bool = null)(implicit p: Parameters)
     extends TLSerModule(_clock, _reset)(p) with HasTileLinkSerializers {
-  val io = new Bundle {
-    val tl = (new ClientTileLinkIO).flip
+  val io = IO(new Bundle {
+    val tl = Flipped(new ClientTileLinkIO)
     val serial = new SerialIO(w)
-  }
+  })
 
   val ctomArb = Module(new HellaPeekingArbiter(
     new TLSerChannel, 3, (b: TLSerChannel) => b.last))
@@ -119,17 +120,17 @@ class ClientTileLinkIOSerdes(w: Int, _clock: Clock = null, _reset: Bool = null)(
   io.tl.grant.bits := io.tl.grant.bits.fromBits(des.io.out.bits.data)
   io.tl.probe.valid := des.io.out.valid && des.io.out.bits.chan === SER_PRB
   io.tl.probe.bits := io.tl.probe.bits.fromBits(des.io.out.bits.data)
-  des.io.out.ready := MuxLookup(des.io.out.bits.chan, Bool(false), Seq(
+  des.io.out.ready := MuxLookup(des.io.out.bits.chan, false.B, Seq(
     SER_GNT -> io.tl.grant.ready,
     SER_PRB -> io.tl.probe.ready))
 }
 
 class ClientTileLinkIODesser(w: Int, _clock: Clock = null, _reset: Bool = null)(implicit p: Parameters)
     extends TLSerModule(_clock, _reset)(p) with HasTileLinkSerializers {
-  val io = new Bundle {
+  val io = IO(new Bundle {
     val serial = new SerialIO(w)
     val tl = new ClientTileLinkIO
-  }
+  })
 
   val mtocArb = Module(new HellaPeekingArbiter(
     new TLSerChannel, 2, (b: TLSerChannel) => b.last))
@@ -152,7 +153,7 @@ class ClientTileLinkIODesser(w: Int, _clock: Clock = null, _reset: Bool = null)(
   io.tl.release.bits := io.tl.release.bits.fromBits(des.io.out.bits.data)
   io.tl.acquire.valid := des.io.out.valid && des.io.out.bits.chan === SER_ACQ
   io.tl.acquire.bits := io.tl.acquire.bits.fromBits(des.io.out.bits.data)
-  des.io.out.ready := MuxLookup(des.io.out.bits.chan, Bool(false), Seq(
+  des.io.out.ready := MuxLookup(des.io.out.bits.chan, false.B, Seq(
     SER_FIN -> io.tl.finish.ready,
     SER_REL -> io.tl.release.ready,
     SER_ACQ -> io.tl.acquire.ready))
@@ -161,10 +162,10 @@ class ClientTileLinkIODesser(w: Int, _clock: Clock = null, _reset: Bool = null)(
 class ClientUncachedTileLinkIOSerdes(w: Int, _clock: Clock = null, _reset: Bool = null)(implicit p: Parameters)
     extends TLSerModule(_clock, _reset)(p) with HasTileLinkSerializers {
 
-  val io = new Bundle {
-    val tl = (new ClientUncachedTileLinkIO).flip
+  val io = IO(new Bundle {
+    val tl = Flipped(new ClientUncachedTileLinkIO)
     val serial = new SerialIO(w)
-  }
+  })
 
   val ser = Module(new Serializer(w, new TLSerChannel))
   ser.io.in.valid := io.tl.acquire.valid
@@ -181,10 +182,10 @@ class ClientUncachedTileLinkIOSerdes(w: Int, _clock: Clock = null, _reset: Bool 
 
 class ClientUncachedTileLinkIODesser(w: Int, _clock: Clock = null, _reset: Bool = null)(implicit p: Parameters)
     extends TLSerModule(_clock, _reset)(p) with HasTileLinkSerializers {
-  val io = new Bundle {
+  val io = IO(new Bundle {
     val serial = new SerialIO(w)
     val tl = new ClientUncachedTileLinkIO
-  }
+  })
 
   val ser = Module(new Serializer(w, new TLSerChannel))
   ser.io.in.valid := io.tl.grant.valid
@@ -202,11 +203,11 @@ class ClientUncachedTileLinkIODesser(w: Int, _clock: Clock = null, _reset: Bool 
 class ClientUncachedTileLinkIOBidirectionalSerdes(
     w: Int, _clock: Clock = null, _reset: Bool = null)(implicit p: Parameters)
     extends TLSerModule(_clock, _reset)(p) with HasTileLinkSerializers {
-  val io = new Bundle {
+  val io = IO(new Bundle {
     val serial = new SerialIO(w)
     val tl_client = new ClientUncachedTileLinkIO
-    val tl_manager = new ClientUncachedTileLinkIO().flip
-  }
+    val tl_manager = Flipped(new ClientUncachedTileLinkIO())
+  })
 
   val serArb = Module(new HellaPeekingArbiter(
     new TLSerChannel, 2, (b: TLSerChannel) => b.last))
@@ -227,7 +228,7 @@ class ClientUncachedTileLinkIOBidirectionalSerdes(
   io.tl_manager.grant.bits := io.tl_manager.grant.bits.fromBits(des.io.out.bits.data)
   io.tl_client.acquire.valid := des.io.out.valid && des.io.out.bits.chan === SER_ACQ
   io.tl_client.acquire.bits := io.tl_client.acquire.bits.fromBits(des.io.out.bits.data)
-  des.io.out.ready := MuxLookup(des.io.out.bits.chan, Bool(false), Seq(
+  des.io.out.ready := MuxLookup(des.io.out.bits.chan, false.B, Seq(
     SER_GNT -> io.tl_manager.grant.ready,
     SER_ACQ -> io.tl_client.acquire.ready))
 }

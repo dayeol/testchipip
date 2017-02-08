@@ -1,9 +1,11 @@
 package testchipip
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 import uncore.tilelink._
 import cde.Parameters
 import scala.collection.mutable.ListBuffer
+import scala.collection.mutable.HashMap
 
 trait HasSCRParameters {
   val scrDataBits = 64
@@ -18,11 +20,11 @@ class SCRFile(
   val nControl = controlNames.size
   val nStatus = statusNames.size
 
-  val io = new Bundle {
-    val tl = (new ClientUncachedTileLinkIO).flip
-    val control = Vec(nControl, UInt(OUTPUT, width = scrDataBits))
-    val status  = Vec(nStatus,  UInt(INPUT, width = scrDataBits))
-  }
+  val io = IO(new Bundle {
+    val tl = Flipped(new ClientUncachedTileLinkIO)
+    val control = Output(Vec(nControl, UInt(scrDataBits.W)))
+    val status  = Input(Vec(nStatus,  UInt(scrDataBits.W)))
+  })
 
   val controlMapping = controlNames.zipWithIndex.toMap
   val statusMapping = statusNames.zipWithIndex.toMap
@@ -33,26 +35,27 @@ class SCRFile(
   require(controlInits.size == nControl)
   require(io.tl.tlDataBits == scrDataBits)
 
-  val ctrl_reg = controlInits.map((u: UInt) => Reg(UInt(width = scrDataBits), init = u))
+  val ctrl_reg = controlInits.map((u: UInt) => Reg(UInt(scrDataBits.W), init = u))
   val all_reg = Vec(ctrl_reg ++ io.status)
 
   val acq = Queue(io.tl.acquire)
   val addr = Cat(acq.bits.addr_block, acq.bits.addr_beat)
+  val index = addr(log2Up(nControl+nStatus), 0)
   val wen = acq.valid && acq.bits.hasData()
   val wdata = acq.bits.data
 
   for (i <- 0 until nControl)
-    when (wen && addr(log2Up(nControl), 0) === UInt(i)) { ctrl_reg(i) := wdata }
+    when (wen && index === i.U) { ctrl_reg(i) := wdata }
 
   acq.ready := io.tl.grant.ready
   io.tl.grant.valid := acq.valid
   io.tl.grant.bits := Grant(
-    is_builtin_type = Bool(true),
+    is_builtin_type = true.B,
     g_type = acq.bits.getBuiltInGrantType(),
     client_xact_id = acq.bits.client_xact_id,
-    manager_xact_id = UInt(0),
+    manager_xact_id = 0.U,
     addr_beat = acq.bits.addr_beat,
-    data = all_reg(addr))
+    data = all_reg(index))
 
   io.control := ctrl_reg
 }
@@ -74,6 +77,7 @@ class SCRBuilder(val devName: String) extends HasSCRParameters {
 
   def generate(start: BigInt, c: Clock = null, r: Bool = null)(implicit p: Parameters): SCRFile = {
     SCRHeaderOutput.add(this.makeHeader(start))
+    SCRAddressMap.add(devName, this.makeHashMap(start))
     Module(new SCRFile(controlNames.toSeq, statusNames.toSeq, controlInits.toSeq, c, r))
   }
 
@@ -89,6 +93,29 @@ class SCRBuilder(val devName: String) extends HasSCRParameters {
 
     sb.toString
   }
+
+  def makeHashMap(start: BigInt): HashMap[String,BigInt] = {
+    val map = new HashMap[String,BigInt]
+    val statusOff = controlNames.size*(scrDataBits/8)
+
+    for ((name, i) <- controlNames.zipWithIndex)
+      map.put(name, start + i*(scrDataBits/8))
+
+    for ((name, i) <- statusNames.zipWithIndex)
+      map.put(name, start + statusOff + i*(scrDataBits/8))
+
+    map
+  }
+}
+
+object SCRAddressMap {
+  val contents = new HashMap[String,HashMap[String,BigInt]]
+
+  def add(s: String, m: HashMap[String,BigInt]) {
+    contents.put(s, m)
+  }
+
+  def apply(s: String) = contents.get(s)
 }
 
 object SCRHeaderOutput {
